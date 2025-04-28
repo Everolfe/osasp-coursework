@@ -2,21 +2,13 @@
 #include "ui.h"
 #include"variables.h"
 #include"stack.h"
+#include"utils.h"
 
-
-void edit_byte(sector_t* sectors);
 void handle_input(int ch, sector_t* sectors);
 void save_buffer_to_file(sector_t *sectors);
 void load_buffer_from_file(sector_t *sectors);
 void create_sectors_directory();
 void go_to_sector(off_t *sector);
-void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str, bool is_hex);
-int search_string_in_sector(unsigned char *buffer, const char *search_str, int *matches, bool is_hex);
-int search_bytes_in_sector(unsigned char *buffer, unsigned char *search_bytes, int search_len);
-void replace_string_at_cursor(sector_t *sectors, const char *input_str, bool is_hex);
-void delete_bytes_from_cursor(sector_t *sectors, int count);
-void delete_string_at_cursor(sector_t *sectors, const char *search_str, bool is_hex);
-int parse_hex_string(const char *hex_str, unsigned char *output);
 bool display_help_flag = false;
 bool exit_flag = false;
 bool file_loaded = false;
@@ -38,6 +30,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    sectors.buffer_size = SECTOR_SIZE;
+    sectors.buffer = malloc(sectors.buffer_size);
+    if (!sectors.buffer) {
+        perror("Failed to allocate memory for sector buffer");
+        close_device(&sectors.fd);
+        return 1;
+    }
     init_ui();
 
     int ch;
@@ -60,7 +59,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    endwin();
+    close_device(&sectors.fd);
 
+    if (sectors.buffer) {
+        free(sectors.buffer);
+    }
+    
+    clear_all_stacks();
     return 0;
 }
 
@@ -68,6 +74,8 @@ void handle_input(int ch, sector_t* sectors) {
     static char search_string[MAX_INPUT_LEN] = {0};
     static int search_in_progress = 0;      
     static int current_match_index = 0;
+    char mode;
+    bool is_hex = false;
     bool redo_flag = false;
     bool undo_flag = false;
     switch (ch) {
@@ -81,7 +89,6 @@ void handle_input(int ch, sector_t* sectors) {
             memset(matches, 0, sizeof(matches));
             match_count = 0;
             clear();
-            refresh();
             break;
         case 'd':         case 'D': // Переход к следующему сектору
             sectors->sector++;
@@ -122,8 +129,6 @@ void handle_input(int ch, sector_t* sectors) {
             case 'I': case 'i':
             {
                 char input_str[MAX_INPUT_LEN] = {0};
-                char mode;
-                bool is_hex = false;
             
                 display_message("Mode (a=ASCII / h=HEX)? ");
                 mode = getch();
@@ -182,8 +187,6 @@ void handle_input(int ch, sector_t* sectors) {
 
             case '/':  
             {
-                char mode;
-                bool is_hex = false;
                 display_message("Search mode: (a) ASCII / (h) HEX? ");
                 mode = getch();
                 if (mode == 'h' || mode == 'H') {
@@ -214,8 +217,6 @@ void handle_input(int ch, sector_t* sectors) {
             
             case 'r': case 'R':
             {
-                char mode;
-                bool is_hex = false;
                 display_message("Search mode: (a) ASCII / (h) HEX? ");
                 mode = getch();
                 if (mode == 'h' || mode == 'H') {
@@ -246,8 +247,6 @@ void handle_input(int ch, sector_t* sectors) {
             break; 
         case 'x':  // Удаление найденного слова
             {
-                char mode;
-                bool is_hex = false;
                 display_message("Delete mode: (a) ASCII / (h) HEX? ");
                 mode = getch();
                 input_string(search_string, "Enter string to delete: ");
@@ -355,89 +354,54 @@ void handle_input(int ch, sector_t* sectors) {
     
 }
 
-void edit_byte(sector_t* sectors) {
-    int index = sectors->cursor_y * 16 + sectors->cursor_x;
-    int ch;
-    char input[3] = {0};
-
-    unsigned char old_value = sectors->buffer[index]; // <-- сохраняем старое значение
-
-    if (display_mode == 0) {
-        input_string(input, "Enter HEX value (2 characters, 0-9, A-F): ");
-        if (strlen(input) == 2 && isxdigit(input[0]) && isxdigit(input[1])) {
-            unsigned char new_value = (unsigned char)strtol(input, NULL, 16);
-            sectors->buffer[index] = new_value;
-
-            // сохраняем операцию в undo стек
-            save_undo_state(sectors, OP_BYTE_CHANGE, index, old_value, new_value, NULL, NULL,0);
-
-            // Очищаем стек redo после нового действия
-            redo_top = -1;
-        } else {
-            display_error("Invalid HEX input. Please enter two hexadecimal characters.");
-        }
-    } else {
-        display_message("Enter ASCII value: ");
-        echo();
-        curs_set(1);
-        ch = getch();
-        if (ch >= 0x20 && ch <= 0x7E) {
-            unsigned char new_value = (unsigned char)ch;
-            sectors->buffer[index] = new_value;
-
-            save_undo_state(sectors, OP_BYTE_CHANGE, index, old_value, new_value, NULL, NULL,0);
-
-            redo_top = -1;
-        } else {
-            display_error("Invalid ASCII input. Only printable characters allowed.");
-        }
-        noecho();
-        curs_set(0);
-    }
-}
-
-
 void go_to_sector(off_t *sector) {
-
-    // Выводим сообщение в нижней строке
     display_message("Enter sector number (max 2048): ");
 
-    // Включаем отображение ввода
     echo();
-    curs_set(1);  // Показываем курсор для ввода
+    curs_set(1);  // Показываем курсор
 
-    // Место для ввода данных
-    char input[MAX_COL];
-    
-    // Вводим строку в том же месте, где было сообщение
-    mvgetstr(LINES - 1, MAX_ROW, input);  // Чтение ввода с позиции (LINES-1, 30)
+    char *input = (char *)malloc(MAX_COL);
+    if (!input) {
+        display_error("Memory allocation failed");
+        noecho();
+        curs_set(0);
+        return;
+    }
+    memset(input, 0, MAX_COL);
 
-    // Отключаем отображение символов и убираем курсор
+    mvgetstr(LINES - 1, MAX_ROW, input);
+
     noecho();
     curs_set(0);
 
-    // Преобразуем строку в число
     off_t new_sector = atol(input);
     if (new_sector >= 0 && new_sector <= MAX_SECTOR) {
         *sector = new_sector;
-        // После ввода очищаем строку и обновляем экран
         clear();
         refresh();
     } else {
         display_error("Invalid sector number");
     }
+
+    free(input);  // Освобождаем память!
 }
 
 
 
 
+
 void save_buffer_to_file(sector_t *sectors) {
-    char filename[64];
-    snprintf(filename, sizeof(filename), "./sectors/sector_%lld.bin", (long long)sectors->sector);
+    char *filename = (char *)malloc(128);  // Выделяем побольше места с запасом
+    if (!filename) {
+        display_error("Memory allocation failed for filename");
+        return;
+    }
+    snprintf(filename, 128, "./sectors/sector_%lld.bin", (long long)sectors->sector);
 
     FILE *fp = fopen(filename, "wb");
     if (!fp) {
         display_error("Failed to open file for writing");
+        free(filename);
         return;
     }
 
@@ -447,20 +411,34 @@ void save_buffer_to_file(sector_t *sectors) {
     if (written != SECTOR_SIZE) {
         display_error("Failed to write full sector to file");
     } else {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "Sector saved to %s", filename);
+        char *msg = (char *)malloc(128);
+        if (!msg) {
+            display_error("Memory allocation failed for message");
+            free(filename);
+            return;
+        }
+        snprintf(msg, 128, "Sector saved to %s", filename);
         display_message(msg);
+        free(msg);
     }
+
+    free(filename);
 }
 
 
+
 void load_buffer_from_file(sector_t *sectors) {
-    char filename[64];
-    snprintf(filename, sizeof(filename), "./sectors/sector_%lld.bin", (long long)sectors->sector);
+    char *filename = (char *)malloc(128);
+    if (!filename) {
+        display_error("Memory allocation failed for filename");
+        return;
+    }
+    snprintf(filename, 128, "./sectors/sector_%lld.bin", (long long)sectors->sector);
 
     FILE *fp = fopen(filename, "rb");
     if (!fp) {
         display_error("Failed to open file for reading");
+        free(filename);
         return;
     }
 
@@ -470,11 +448,20 @@ void load_buffer_from_file(sector_t *sectors) {
     if (read != SECTOR_SIZE) {
         display_error("Failed to read full sector from file");
     } else {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "Sector loaded from %s", filename);
+        char *msg = (char *)malloc(128);
+        if (!msg) {
+            display_error("Memory allocation failed for message");
+            free(filename);
+            return;
+        }
+        snprintf(msg, 128, "Sector loaded from %s", filename);
         display_message(msg);
+        free(msg);
     }
+
+    free(filename);
 }
+
 
 
 void create_sectors_directory() {
@@ -490,214 +477,4 @@ void create_sectors_directory() {
         printf("Directory 'sectors' already exists\n");
     }
 }
-
-int search_string_in_sector(unsigned char *buffer, const char *search_str, int *matches, bool is_hex) {
-    unsigned char search_bytes[17] = {0};
-    int search_len = 0;
-
-    if (is_hex) {
-        search_len = parse_hex_string(search_str, search_bytes);
-    } else {
-        search_len = strlen(search_str);
-        memcpy(search_bytes, search_str, search_len);
-    }
-
-    if (search_len == 0 || search_len > 16) {
-        display_error("Invalid search string length");
-        return 0;
-    }
-
-    int match_count = 0;
-
-    for (int i = 0; i <= SECTOR_SIZE - search_len; i++) {
-        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
-            if (match_count < MAX_MATCHES) {
-                matches[match_count++] = i;  // Сохраняем индекс совпадения
-            }
-        }
-    }
-
-    return match_count;  // Возвращаем количество найденных совпадений
-}
-
-
-int search_bytes_in_sector(unsigned char *buffer, unsigned char *search_bytes, int search_len) {
-    for (int i = 0; i < SECTOR_SIZE - search_len; i++) {
-        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
-            return i; // Возвращаем индекс первого вхождения
-        }
-    }
-    return -1; // Если не найдено
-}
-
-void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str, bool is_hex) {
-    unsigned char search_bytes[17] = {0};
-    unsigned char replace_bytes[17] = {0};
-    int search_len = 0;
-    int replace_len = 0;
-
-    if (is_hex) {
-        search_len = parse_hex_string(search_str, search_bytes);
-        replace_len = parse_hex_string(replace_str, replace_bytes);
-    } else {
-        search_len = strlen(search_str);
-        replace_len = strlen(replace_str);
-        memcpy(search_bytes, search_str, search_len);
-        memcpy(replace_bytes, replace_str, replace_len);
-    }
-
-    if (search_len == 0 || replace_len == 0 || search_len > 16 || replace_len > 16) {
-        display_error("Invalid search or replacement length");
-        return;
-    }
-
-    if (replace_len > search_len) {
-        display_error("Replacement string is longer than search string!");
-        return;
-    }
-
-    int replacements = 0;
-    for (int i = 0; i <= SECTOR_SIZE - search_len; i++) {
-        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
-            memcpy(buffer + i, replace_bytes, replace_len);
-            for (int j = replace_len; j < search_len; j++) {
-                buffer[i + j] = 0x00; // Заполняем остаток нулями
-            }
-            replacements++;
-        }
-    }
-
-    if (replacements > 0) {
-        display_message("Replacement complete.");
-    } else {
-        display_message("No matches found.");
-    }
-}
-
-
-void replace_string_at_cursor(sector_t *sectors, const char *input_str, bool is_hex) {
-    int index = sectors->cursor_y * 16 + sectors->cursor_x;
-    unsigned char data[17] = {0};
-    int data_len = 0;
-
-    if (is_hex) {
-        data_len = parse_hex_string(input_str, data);
-    } else {
-        data_len = strlen(input_str);
-        memcpy(data, input_str, data_len);
-    }
-
-    if (index + data_len > SECTOR_SIZE) {
-        display_error("Insert string exceeds sector boundaries!");
-        return;
-    }
-
-    char old_line[17] = {0};
-    for (int i = 0; i < data_len; i++) {
-        old_line[i] = sectors->buffer[index + i];
-    }
-
-    // Сохраняем в undo стек
-    save_undo_state(sectors, OP_LINE_REPLACE, index, 0, 0, old_line, (char *)data, data_len);
-
-    // Заменяем байты
-    for (int i = 0; i < data_len; i++) {
-        sectors->buffer[index + i] = data[i];
-    }
-
-    redo_top = -1;
-}
-
-
-
-
-void delete_string_at_cursor(sector_t *sectors, const char *search_str, bool is_hex) {
-    unsigned char search_bytes[17] = {0};
-    int search_len = 0;
-
-    if (is_hex) {
-        search_len = parse_hex_string(search_str, search_bytes);
-    } else {
-        search_len = strlen(search_str);
-        memcpy(search_bytes, search_str, search_len);
-    }
-
-    if (search_len == 0 || search_len > 16) {
-        display_error("Invalid search string length");
-        return;
-    }
-
-    unsigned char *buffer = sectors->buffer;
-
-    for (int i = 0; i <= SECTOR_SIZE - search_len; i++) {
-        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
-            char old_data[17] = {0};
-            memcpy(old_data, buffer + i, search_len);
-
-            // Обнуляем найденную строку
-            memset(buffer + i, 0x00, search_len);
-
-            // Сохраняем в undo
-            save_undo_state(sectors, OP_LINE_REMOVE, i, 0, 0, old_data, NULL, search_len);
-
-            redo_top = -1;
-
-            display_message("String deleted.");
-            return;
-        }
-    }
-
-    display_message("String not found.");
-}
-
-
-
-
-void delete_bytes_from_cursor(sector_t *sectors, int count) {
-    int index = sectors->cursor_y * 16 + sectors->cursor_x;
-
-    if (index + count > SECTOR_SIZE) {
-        display_error("Delete range exceeds sector boundaries!");
-        return;
-    }
-
-    // Сохраняем удаляемые байты
-    char old_data[17] = {0};  // Максимум 16 байт + \0
-    memcpy(old_data, &sectors->buffer[index], count);
-
-    // Удаляем байты
-    for (int i = 0; i < count; i++) {
-        sectors->buffer[index + i] = 0x00;
-    }
-
-    // Сохраняем в undo
-    save_undo_state(sectors, OP_LINE_REMOVE, index, 0, 0, old_data, NULL, count);
-
-    // Сброс redo
-    redo_top = -1;
-
-    display_message("Bytes deleted.");
-}
-
-
-int parse_hex_string(const char *hex_str, unsigned char *output) {
-    int count = 0;
-    while (*hex_str && *(hex_str + 1)) {
-        if (count >= 16) break;  // максимум 16 байт
-        
-        // Пропускаем пробелы
-        if (*hex_str == ' ') {
-            hex_str++;
-            continue;
-        }
-
-        // Считываем 2 символа как один байт
-        char byte_str[3] = { hex_str[0], hex_str[1], '\0' };
-        output[count++] = (unsigned char)strtoul(byte_str, NULL, 16);
-        hex_str += 2;
-    }
-    return count; // Возвращает сколько байтов распарсено
-}
-
-
 

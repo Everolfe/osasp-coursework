@@ -20,7 +20,8 @@ extern int match_count;
 extern int display_mode;
 typedef struct {
     int fd;
-    unsigned char buffer[SECTOR_SIZE];
+    unsigned char *buffer; // теперь указатель на динамический массив
+    size_t buffer_size;    // чтобы знать размер буфера
     off_t sector;
     int cursor_x;
     int cursor_y;

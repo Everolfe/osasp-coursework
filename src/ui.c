@@ -2,18 +2,17 @@
 #include <stdio.h>
 
 void init_ui() {
-    initscr();             // Инициализация ncurses
-    start_color();         // Включаем поддержку цветов
-    init_pair(1, COLOR_GREEN, COLOR_BLACK);  // Определяем пару цветов: красный текст на черном фоне
-    init_pair(2, COLOR_YELLOW, COLOR_BLACK); // Жёлтый для обычного текста
-    cbreak();              // Отключаем буферизацию ввода
-    noecho();              // Отключаем вывод вводимых символов
-    keypad(stdscr, TRUE);  // Включаем поддержку функциональных клавиш (стрелок)
+    initscr();
+    start_color();
+    init_pair(1, COLOR_GREEN, COLOR_BLACK);
+    init_pair(2, COLOR_YELLOW, COLOR_BLACK);
+    cbreak();
+    noecho();
+    curs_set(0);        
+    keypad(stdscr, TRUE);
 }
 
-void close_ui() {
-    endwin();
-}
+
 
 void display_error(const char *msg) {
     move(0, 0);
@@ -26,72 +25,90 @@ void display_error(const char *msg) {
 }
 
 void display_sector(const unsigned char *buffer, size_t size, off_t sector_num, int cursor_x, int cursor_y) {
-    move(0, 0);
-    clrtoeol();  // Очищаем строку для обновления информации о секторе
-    printw("Sector: %lld (Size: %lu bytes)   Cursor: [%d:%d]   Byte: 0x%02X ('%c')   Mode: %s",
-            (long long)sector_num, size,
-            cursor_y, cursor_x,
-            buffer[cursor_y * 16 + cursor_x],
-            (buffer[cursor_y * 16 + cursor_x] >= 32 && buffer[cursor_y * 16 + cursor_x] <= 126) ?
-                buffer[cursor_y * 16 + cursor_x] : '.',
-            (display_mode == 0) ? "HEX" : "ASCII");
 
-            for (int i = 0; i < 32; i++) {
-                for (int j = 0; j < 16; j++) {
-                    int index = i * 16 + j;
-                    if (index >= size) continue;
-        
-                    move(2 + i, j * 3);  // Перемещаем курсор на нужную позицию
-                    // Подсветка текущей позиции курсора
-                    if (i == cursor_y && j == cursor_x) {
-                        attron(A_REVERSE);
-                    } else {
-                        // Проверка на совпадение
-                        for (int k = 0; k < match_count; k++) {
-                            if (matches[k] == index) {
-                                attron(COLOR_PAIR(1));
-                                break;
-                            }
-                        }
+    // Заголовок
+    attron(A_BOLD | COLOR_PAIR(2));
+    mvprintw(0, 0, " Sector: %lld  |  Size: %lu bytes  |  Cursor: [%02d:%02d]  |  Mode: %s ",
+            (long long)sector_num, size, cursor_y, cursor_x,
+            (display_mode == 0) ? "HEX" : "ASCII");
+    attroff(A_BOLD | COLOR_PAIR(2));
+
+    // Разделение экрана на два блока: HEX и ASCII
+    for (int row = 0; row < 32; row++) {
+        for (int col = 0; col < 16; col++) {
+            int index = row * 16 + col;
+            if (index >= size) continue;
+
+            int y = 2 + row;
+            int x = 3 * col;
+
+            // HEX вывод
+            move(y, x);
+            if (row == cursor_y && col == cursor_x) {
+                attron(A_REVERSE);
+            } else {
+                for (int m = 0; m < match_count; m++) {
+                    if (matches[m] == index) {
+                        attron(COLOR_PAIR(1));
+                        break;
                     }
-        
-                    // Печать байта в зависимости от режима
-                    if (display_mode == 0) {
-                        printw("%02X", buffer[index]);  // HEX
-                    } else {
-                        unsigned char c = buffer[index];
-                        if (c >= 32 && c <= 126) {
-                            printw(" %c", c); // Печатаемый ASCII
-                        } else {
-                            printw(" .");    // Непечатаемый символ
-                        }
-                    }
-        
-                    attroff(A_REVERSE);
-                    attroff(COLOR_PAIR(1));
                 }
             }
-        
-            refresh();
-}
-void display_help() {
-    // Очищаем нижнюю строку и выводим подсказку
-    move(LINES - 7, 0);  
-    clrtoeol();  // Очищаем строку
-    attron(A_BOLD | COLOR_PAIR(2)); // Выделим текст для подсказки (жёлтым)
 
-    // Печатаем подсказку
-    
-    printw("Help: [Q/q] Exit  [/] Search  [x] Delete Word  [X] Delete Bytes\n");
-    printw("[U/u] Undo  [Ctrl+u] Redo\n");
-    printw("[N/n] Next Match  [P/p] Previous Match  [d/D] Next Sector\n");
-    printw("[i/I] Insert String  [a/A] Previous Sector  [e/E] Edit Byte\n");
-    printw("[l/L] Load Sector  [s/S] Save Sector  [r/R] Replace String\n");
-    printw("[g] Go to Sector  [Arrow keys] Move Cursor  [Tab] Toggle Mode");
+            if (display_mode == 0) {
+                printw("%02X", buffer[index]);
+            } else {
+                unsigned char c = buffer[index];
+                if (c >= 32 && c <= 126) {
+                    printw(" %c", c);
+                } else {
+                    printw(" .");
+                }
+            }
 
-    attroff(A_BOLD | COLOR_PAIR(2));  // Снимаем выделение
+            attroff(A_REVERSE);
+            attroff(COLOR_PAIR(1));
+
+            // Разделение между HEX и ASCII выводом
+            if (col == 15) {
+                mvprintw(y, 50, "| ");
+
+                // ASCII вывод
+                for (int ascii_col = 0; ascii_col < 16; ascii_col++) {
+                    int ascii_idx = row * 16 + ascii_col;
+                    if (ascii_idx >= size) break;
+                    unsigned char c = buffer[ascii_idx];
+                    if (c >= 32 && c <= 126) {
+                        printw("%c", c);
+                    } else {
+                        printw(".");
+                    }
+                }
+            }
+        }
+    }
+
+    // Нарисовать разделительную линию
+    for (int i = 0; i < COLS; i++) {
+        mvaddch(1, i, ACS_HLINE);
+    }
+
     refresh();
 }
+
+void display_help() {
+    move(LINES - 6, 0);
+    clrtoeol();
+    attron(A_BOLD | COLOR_PAIR(2));
+    mvprintw(LINES - 6, 0, " [Q] Quit  [/] Search  [X] Delete Word  [Ctrl+U] Redo  [U] Undo");
+    mvprintw(LINES - 5, 0, " [N] Next Match  [P] Previous Match  [G] Go to Sector");
+    mvprintw(LINES - 4, 0, " [D] Next Sector  [A] Previous Sector");
+    mvprintw(LINES - 3, 0, " [I] Insert String  [E] Edit Byte  [L] Load  [S] Save  [R] Replace");
+    mvprintw(LINES - 2, 0, " [Tab] Toggle Mode  [Arrows] Move Cursor");
+    attroff(A_BOLD | COLOR_PAIR(2));
+    refresh();
+}
+
 
 void display_message(const char *msg) {
     move(LINES - 1, 0);  // Перемещаемся в нижнюю строку
@@ -103,7 +120,6 @@ void display_message(const char *msg) {
 }
 
 void graceful_exit(sector_t *sectors) {
-    close_ui();
     close_device(&sectors->fd);
     clear();
     refresh();

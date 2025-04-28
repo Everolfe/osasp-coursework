@@ -7,53 +7,44 @@ int undo_top = -1;
 int redo_top = -1;
 
 
-char* get_line_at_cursor(sector_t *sectors) {
-    static char line_buffer[17];  // 16 байт строки + 1 нулевой символ для безопасности
-    memset(line_buffer, 0, sizeof(line_buffer));
-
-    int line_start = sectors->cursor_y * 16;
-    if (line_start >= SECTOR_SIZE) {
-        return line_buffer; // Защита от выхода за границы
-    }
-
-    int line_end = line_start + 16;
-    if (line_end > SECTOR_SIZE) {
-        line_end = SECTOR_SIZE;
-    }
-
-    for (int i = line_start, j = 0; i < line_end; i++, j++) {
-        line_buffer[j] = sectors->buffer[i];
-    }
-
-    return line_buffer;
-}
 
 void save_undo_state(sector_t *sectors, operation_t op_type, int index,
     unsigned char old_value, unsigned char new_value, const char *old_line, const char *new_line, int data_length) {
+
     if (undo_top < UNDO_STACK_SIZE - 1) {
         undo_top++;
     } else {
-        // Shift items
+        // Освобождаем память старого элемента перед сдвигом
+        free(undo_stack[0].old_line);
+        free(undo_stack[0].new_line);
         for (int i = 0; i < UNDO_STACK_SIZE - 1; i++) {
             undo_stack[i] = undo_stack[i + 1];
         }
+        undo_top = UNDO_STACK_SIZE - 1;
     }
+
     undo_item_t *item = &undo_stack[undo_top];
     item->op_type = op_type;
     item->index = index;
     item->old_value = old_value;
     item->new_value = new_value;
-
-    if (old_line) {
-        strncpy(item->old_line, old_line, sizeof(item->old_line) - 1);
-        item->old_line[sizeof(item->old_line) - 1] = '\0'; // Ensure null-termination
-    }
-    if (new_line) {
-        strncpy(item->new_line, new_line, sizeof(item->new_line) - 1);
-        item->new_line[sizeof(item->new_line) - 1] = '\0'; // Ensure null-termination
-    }
     item->data_length = data_length;
+
+    if (old_line && data_length > 0) {
+        item->old_line = (char *)malloc(data_length);
+        memcpy(item->old_line, old_line, data_length);
+    } else {
+        item->old_line = NULL;
+    }
+
+    if (new_line && data_length > 0) {
+        item->new_line = (char *)malloc(data_length);
+        memcpy(item->new_line, new_line, data_length);
+    } else {
+        item->new_line = NULL;
+    }
 }
+
 
 
 bool undo(sector_t *sectors) {
@@ -64,15 +55,13 @@ bool undo(sector_t *sectors) {
                 sectors->buffer[item->index] = item->old_value;
                 break;
             case OP_LINE_REMOVE:
-                // Восстановление строки
-                memcpy(&sectors->buffer[item->index], item->old_line, item->data_length);
-                break;
             case OP_LINE_REPLACE:
-                // Восстановление старой строки
-                memcpy(&sectors->buffer[item->index], item->old_line, item->data_length);
+                if (item->old_line) {
+                    memcpy(&sectors->buffer[item->index], item->old_line, item->data_length);
+                }
                 break;
         }
-        // Перемещаем в стек redo
+
         if (redo_top < UNDO_STACK_SIZE - 1) {
             redo_top++;
             redo_stack[redo_top] = *item;
@@ -85,6 +74,7 @@ bool undo(sector_t *sectors) {
     }
 }
 
+
 bool redo(sector_t *sectors) {
     if (redo_top >= 0) {
         undo_item_t *item = &redo_stack[redo_top];
@@ -93,13 +83,13 @@ bool redo(sector_t *sectors) {
                 sectors->buffer[item->index] = item->new_value;
                 break;
             case OP_LINE_REMOVE:
-                memcpy(&sectors->buffer[item->index], item->new_line, item->data_length);
-                break;
             case OP_LINE_REPLACE:
-                memcpy(&sectors->buffer[item->index], item->new_line, item->data_length);
+                if (item->new_line) {
+                    memcpy(&sectors->buffer[item->index], item->new_line, item->data_length);
+                }
                 break;
         }
-        // Перемещаем в стек undo
+
         if (undo_top < UNDO_STACK_SIZE - 1) {
             undo_top++;
             undo_stack[undo_top] = *item;
@@ -111,4 +101,36 @@ bool redo(sector_t *sectors) {
         return false;
     }
 }
+// Освобождение памяти одного элемента
+void free_undo_item(undo_item_t *item) {
+    if (item->old_line) {
+        free(item->old_line);
+        item->old_line = NULL;
+    }
+    if (item->new_line) {
+        free(item->new_line);
+        item->new_line = NULL;
+    }
+}
 
+// Очистка undo стека
+void clear_undo_stack() {
+    for (int i = 0; i <= undo_top; i++) {
+        free_undo_item(&undo_stack[i]);
+    }
+    undo_top = -1;
+}
+
+// Очистка redo стека
+void clear_redo_stack() {
+    for (int i = 0; i <= redo_top; i++) {
+        free_undo_item(&redo_stack[i]);
+    }
+    redo_top = -1;
+}
+
+// Очистка обоих стеков сразу
+void clear_all_stacks() {
+    clear_undo_stack();
+    clear_redo_stack();
+}
