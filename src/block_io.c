@@ -5,7 +5,11 @@
 
 
 int open_device(const char *path) {
-    return open(path, O_RDWR);
+    int fd = open(path, O_RDWR);
+    if (fd < 0) {
+        perror("Failed to open device");
+    }
+    return fd;
 }
 
 int read_sector(sector_t *sector_data) {
@@ -51,6 +55,9 @@ int write_sector(sector_t *sector_data) {
 }
 
 
-void close_device(int fd) {
-    close(fd);
+void close_device(int* fd) {
+    if(*fd != -1){
+        close(*fd);
+        *fd = -1;
+    }
 }

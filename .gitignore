@@ -50,5 +50,5 @@ Makefile
 *.yy.c
 *.tab.c
 *.tab.h
-
+*.img
 *.pdf

@@ -76,12 +76,14 @@ void display_sector(const unsigned char *buffer, size_t size, off_t sector_num, 
 }
 void display_help() {
     // Очищаем нижнюю строку и выводим подсказку
-    move(LINES - 6, 0);  
+    move(LINES - 7, 0);  
     clrtoeol();  // Очищаем строку
     attron(A_BOLD | COLOR_PAIR(2)); // Выделим текст для подсказки (жёлтым)
 
     // Печатаем подсказку
-    printw("Help: [q] Exit  [/] Search  [x] Delete Word  [X] Delete Bytes\n");
+    
+    printw("Help: [Q/q] Exit  [/] Search  [x] Delete Word  [X] Delete Bytes\n");
+    printw("[U/u] Undo  [Ctrl+u] Redo\n");
     printw("[N/n] Next Match  [P/p] Previous Match  [d/D] Next Sector\n");
     printw("[i/I] Insert String  [a/A] Previous Sector  [e/E] Edit Byte\n");
     printw("[l/L] Load Sector  [s/S] Save Sector  [r/R] Replace String\n");
@@ -102,9 +104,10 @@ void display_message(const char *msg) {
 
 void graceful_exit(sector_t *sectors) {
     close_ui();
-    close_device(sectors->fd);
+    close_device(&sectors->fd);
+    clear();
+    refresh();
     endwin();
-    exit(0);
 }
 
 void input_string(char *buffer, const char *prompt) {

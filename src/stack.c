@@ -6,27 +6,6 @@ undo_item_t redo_stack[UNDO_STACK_SIZE];
 int undo_top = -1;
 int redo_top = -1;
 
-void insert_line(sector_t *sectors, int line_index, const char *line) {
-    int start = line_index * 16;
-    if (start >= SECTOR_SIZE) return;
-
-    for (int i = 0; i < 16 && start + i < SECTOR_SIZE; i++) {
-        sectors->buffer[start + i] = line[i];
-    }
-}
-
-void remove_line(sector_t *sectors, int line_index) {
-    int start = line_index * 16;
-    if (start >= SECTOR_SIZE) return;
-
-    for (int i = 0; i < 16 && start + i < SECTOR_SIZE; i++) {
-        sectors->buffer[start + i] = 0x00;  // Обнуляем строку
-    }
-}
-
-void replace_line(sector_t *sectors, int line_index, const char *new_line) {
-    insert_line(sectors, line_index, new_line);  // Просто перезаписываем строку
-}
 
 char* get_line_at_cursor(sector_t *sectors) {
     static char line_buffer[17];  // 16 байт строки + 1 нулевой символ для безопасности
@@ -54,22 +33,26 @@ void save_undo_state(sector_t *sectors, operation_t op_type, int index,
     if (undo_top < UNDO_STACK_SIZE - 1) {
         undo_top++;
     } else {
+        // Shift items
         for (int i = 0; i < UNDO_STACK_SIZE - 1; i++) {
             undo_stack[i] = undo_stack[i + 1];
         }
     }
-   undo_item_t *item = &undo_stack[undo_top];
+    undo_item_t *item = &undo_stack[undo_top];
     item->op_type = op_type;
     item->index = index;
     item->old_value = old_value;
     item->new_value = new_value;
+
     if (old_line) {
-        strcpy(item->old_line, old_line);
+        strncpy(item->old_line, old_line, sizeof(item->old_line) - 1);
+        item->old_line[sizeof(item->old_line) - 1] = '\0'; // Ensure null-termination
     }
     if (new_line) {
-        strcpy(item->new_line, new_line);
+        strncpy(item->new_line, new_line, sizeof(item->new_line) - 1);
+        item->new_line[sizeof(item->new_line) - 1] = '\0'; // Ensure null-termination
     }
-   item->data_length = data_length;  // Сохраняем длину
+    item->data_length = data_length;
 }
 
 

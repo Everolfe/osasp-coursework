@@ -7,6 +7,6 @@
 int open_device(const char *path);
 int read_sector(sector_t *s);
 int write_sector(sector_t *s); 
-void close_device(int fd);
+void close_device(int *fd);
 
 #endif

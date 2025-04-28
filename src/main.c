@@ -10,13 +10,15 @@ void save_buffer_to_file(sector_t *sectors);
 void load_buffer_from_file(sector_t *sectors);
 void create_sectors_directory();
 void go_to_sector(off_t *sector);
-void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str);
-int search_string_in_sector(unsigned char *buffer, const char *search_str, int *matches) ;
+void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str, bool is_hex);
+int search_string_in_sector(unsigned char *buffer, const char *search_str, int *matches, bool is_hex);
 int search_bytes_in_sector(unsigned char *buffer, unsigned char *search_bytes, int search_len);
-void replace_string_at_cursor(sector_t *sectors, const char *input_str);
+void replace_string_at_cursor(sector_t *sectors, const char *input_str, bool is_hex);
 void delete_bytes_from_cursor(sector_t *sectors, int count);
-void delete_string_at_cursor(sector_t *sectors, const char *search_str);
+void delete_string_at_cursor(sector_t *sectors, const char *search_str, bool is_hex);
+int parse_hex_string(const char *hex_str, unsigned char *output);
 bool display_help_flag = false;
+bool exit_flag = false;
 bool file_loaded = false;
 int matches[MAX_MATCHES];  
 int match_count = 0;
@@ -53,8 +55,11 @@ int main(int argc, char *argv[]) {
 
         ch = getch();
         handle_input(ch, &sectors);
-        
+        if (exit_flag){
+            break;
+        }
     }
+
 
     return 0;
 }
@@ -114,27 +119,32 @@ void handle_input(int ch, sector_t* sectors) {
             }
             break;  
         
-        case 'I':    case 'i':  // Вставка строки по текущему положению курсора
+            case 'I': case 'i':
             {
                 char input_str[MAX_INPUT_LEN] = {0};
+                char mode;
+                bool is_hex = false;
             
-                input_string(input_str, "Enter string to insert: ");
-                
+                display_message("Mode (a=ASCII / h=HEX)? ");
+                mode = getch();
 
-                
-                // Заменяем байты в буфере
-                replace_string_at_cursor(sectors, input_str);
+                input_string(input_str, "Enter string to insert: ");
             
-                // Записываем изменения в файл
+                if (mode == 'h' || mode == 'H') {
+                    is_hex = true;
+                }
+            
+                replace_string_at_cursor(sectors, input_str, is_hex);
+            
                 if (write_sector(sectors) != SECTOR_SIZE) {
                     display_error("Failed to write sector after insert");
-                }
-                else {
+                } else {
                     clear();
                     refresh();
                 }
                 break;
             }
+            
         case 'l': case 'L':
             load_buffer_from_file(sectors);
             if (write_sector(sectors) != SECTOR_SIZE) {  // Добавлено!
@@ -165,32 +175,53 @@ void handle_input(int ch, sector_t* sectors) {
                 display_message(msg);
             }
             break;
-        case 'q':  
+        case 'q': case 'Q': 
+            exit_flag = true;
             graceful_exit(sectors);
             break;
 
             case '/':  
-            input_string(search_string, "Enter search string: ");
-            // Начинаем поиск
-            match_count = search_string_in_sector(sectors->buffer, search_string, matches);
-
-            if (match_count > 0) {
-                current_match_index = 0;  // Начинаем с первого совпадения
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Found %d matches", match_count);
-                display_message(msg);
-                sectors->cursor_x = matches[current_match_index] % 16;
-                sectors->cursor_y = matches[current_match_index] / 16;
-            } else {
-                display_message("No matches found");
-            }
-
-            clear();
-            refresh();
-            search_in_progress = 1;
-            break;
-        case 'r': case 'R':
             {
+                char mode;
+                bool is_hex = false;
+                display_message("Search mode: (a) ASCII / (h) HEX? ");
+                mode = getch();
+                if (mode == 'h' || mode == 'H') {
+                    is_hex = true;
+                }
+                input_string(search_string, "Enter search string: ");
+            
+
+            
+                match_count = search_string_in_sector(sectors->buffer, search_string, matches, is_hex);
+            
+                if (match_count > 0) {
+                    current_match_index = 0;
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Found %d matches", match_count);
+                    display_message(msg);
+                    sectors->cursor_x = matches[current_match_index] % 16;
+                    sectors->cursor_y = matches[current_match_index] / 16;
+                } else {
+                    display_message("No matches found");
+                }
+            
+                clear();
+                refresh();
+                search_in_progress = 1;
+                break;
+            }
+            
+            case 'r': case 'R':
+            {
+                char mode;
+                bool is_hex = false;
+                display_message("Search mode: (a) ASCII / (h) HEX? ");
+                mode = getch();
+                if (mode == 'h' || mode == 'H') {
+                    is_hex = true;
+                }
+
                 char search_string[MAX_INPUT_LEN] = {0};
                 char replace_string[MAX_INPUT_LEN] = {0};
             
@@ -202,24 +233,31 @@ void handle_input(int ch, sector_t* sectors) {
                 mvgetstr(LINES-1, MAX_ROW, replace_string);
                 noecho(); curs_set(0);
             
-                replace_string_in_sector(sectors->buffer, search_string, replace_string);
+                replace_string_in_sector(sectors->buffer, search_string, replace_string, is_hex);
             
                 if (write_sector(sectors) != SECTOR_SIZE) {
                     display_error("Failed to write sector after replace");
                 }
                 break;
             }
+            
         case 's': case 'S':
             save_buffer_to_file(sectors);
             break; 
         case 'x':  // Удаление найденного слова
             {
+                char mode;
+                bool is_hex = false;
+                display_message("Delete mode: (a) ASCII / (h) HEX? ");
+                mode = getch();
                 input_string(search_string, "Enter string to delete: ");
-
-                // Удаляем найденное слово
-                delete_string_at_cursor(sectors, search_string);
-
-                // Записываем изменения в файл
+            
+                if (mode == 'h' || mode == 'H') {
+                    is_hex = true;
+                }
+            
+                delete_string_at_cursor(sectors, search_string, is_hex);
+            
                 if (write_sector(sectors) != SECTOR_SIZE) {
                     display_error("Failed to write sector after deletion");
                 }
@@ -227,6 +265,7 @@ void handle_input(int ch, sector_t* sectors) {
                 refresh();
                 break;
             }
+            
         case 'X':  // Удаление символов с позиции курсора
             {
                 char delete_count_str[10];
@@ -452,12 +491,26 @@ void create_sectors_directory() {
     }
 }
 
-int search_string_in_sector(unsigned char *buffer, const char *search_str, int *matches) {
-    int str_len = strlen(search_str);
+int search_string_in_sector(unsigned char *buffer, const char *search_str, int *matches, bool is_hex) {
+    unsigned char search_bytes[17] = {0};
+    int search_len = 0;
+
+    if (is_hex) {
+        search_len = parse_hex_string(search_str, search_bytes);
+    } else {
+        search_len = strlen(search_str);
+        memcpy(search_bytes, search_str, search_len);
+    }
+
+    if (search_len == 0 || search_len > 16) {
+        display_error("Invalid search string length");
+        return 0;
+    }
+
     int match_count = 0;
 
-    for (int i = 0; i < SECTOR_SIZE - str_len; i++) {
-        if (memcmp(buffer + i, search_str, str_len) == 0) {
+    for (int i = 0; i <= SECTOR_SIZE - search_len; i++) {
+        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
             if (match_count < MAX_MATCHES) {
                 matches[match_count++] = i;  // Сохраняем индекс совпадения
             }
@@ -466,6 +519,7 @@ int search_string_in_sector(unsigned char *buffer, const char *search_str, int *
 
     return match_count;  // Возвращаем количество найденных совпадений
 }
+
 
 int search_bytes_in_sector(unsigned char *buffer, unsigned char *search_bytes, int search_len) {
     for (int i = 0; i < SECTOR_SIZE - search_len; i++) {
@@ -476,69 +530,115 @@ int search_bytes_in_sector(unsigned char *buffer, unsigned char *search_bytes, i
     return -1; // Если не найдено
 }
 
-void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str) {
-    int search_len = strlen(search_str);
-    int replace_len = strlen(replace_str);
+void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str, bool is_hex) {
+    unsigned char search_bytes[17] = {0};
+    unsigned char replace_bytes[17] = {0};
+    int search_len = 0;
+    int replace_len = 0;
+
+    if (is_hex) {
+        search_len = parse_hex_string(search_str, search_bytes);
+        replace_len = parse_hex_string(replace_str, replace_bytes);
+    } else {
+        search_len = strlen(search_str);
+        replace_len = strlen(replace_str);
+        memcpy(search_bytes, search_str, search_len);
+        memcpy(replace_bytes, replace_str, replace_len);
+    }
+
+    if (search_len == 0 || replace_len == 0 || search_len > 16 || replace_len > 16) {
+        display_error("Invalid search or replacement length");
+        return;
+    }
 
     if (replace_len > search_len) {
         display_error("Replacement string is longer than search string!");
         return;
     }
 
+    int replacements = 0;
     for (int i = 0; i <= SECTOR_SIZE - search_len; i++) {
-        if (memcmp(buffer + i, search_str, search_len) == 0) {
-            memcpy(buffer + i, replace_str, replace_len);
-            // Если замена короче, заполняем оставшиеся байты нулями
+        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
+            memcpy(buffer + i, replace_bytes, replace_len);
             for (int j = replace_len; j < search_len; j++) {
-                buffer[i + j] = 0x00;
+                buffer[i + j] = 0x00; // Заполняем остаток нулями
             }
+            replacements++;
         }
     }
 
-    display_message("Replacement complete.");
+    if (replacements > 0) {
+        display_message("Replacement complete.");
+    } else {
+        display_message("No matches found.");
+    }
 }
 
-void replace_string_at_cursor(sector_t *sectors, const char *input_str) {
-    int index = sectors->cursor_y * 16 + sectors->cursor_x;  // Вычисляем индекс байта
-    int input_len = strlen(input_str);
 
-    // Проверка выхода за пределы буфера
-    if (index + input_len > SECTOR_SIZE) {
+void replace_string_at_cursor(sector_t *sectors, const char *input_str, bool is_hex) {
+    int index = sectors->cursor_y * 16 + sectors->cursor_x;
+    unsigned char data[17] = {0};
+    int data_len = 0;
+
+    if (is_hex) {
+        data_len = parse_hex_string(input_str, data);
+    } else {
+        data_len = strlen(input_str);
+        memcpy(data, input_str, data_len);
+    }
+
+    if (index + data_len > SECTOR_SIZE) {
         display_error("Insert string exceeds sector boundaries!");
         return;
     }
 
-    char old_line[17] = {0}; // до 16 символов + нуль-терминатор
-    for (int i = 0; i < input_len; i++) {
+    char old_line[17] = {0};
+    for (int i = 0; i < data_len; i++) {
         old_line[i] = sectors->buffer[index + i];
     }
 
-    // Сохраняем в undo стек перед изменением
-    save_undo_state(sectors, OP_LINE_REPLACE, index, 0, 0, old_line, input_str, input_len);
+    // Сохраняем в undo стек
+    save_undo_state(sectors, OP_LINE_REPLACE, index, 0, 0, old_line, (char *)data, data_len);
 
-    // Заменяем байты из строки
-    for (int i = 0; i < input_len; i++) {
-        sectors->buffer[index + i] = input_str[i];
+    // Заменяем байты
+    for (int i = 0; i < data_len; i++) {
+        sectors->buffer[index + i] = data[i];
     }
 
-    // После любого изменения нужно сбросить redo стек
     redo_top = -1;
 }
 
 
 
-void delete_string_at_cursor(sector_t *sectors, const char *search_str) {
-    int search_len = strlen(search_str);
+
+void delete_string_at_cursor(sector_t *sectors, const char *search_str, bool is_hex) {
+    unsigned char search_bytes[17] = {0};
+    int search_len = 0;
+
+    if (is_hex) {
+        search_len = parse_hex_string(search_str, search_bytes);
+    } else {
+        search_len = strlen(search_str);
+        memcpy(search_bytes, search_str, search_len);
+    }
+
+    if (search_len == 0 || search_len > 16) {
+        display_error("Invalid search string length");
+        return;
+    }
+
     unsigned char *buffer = sectors->buffer;
 
     for (int i = 0; i <= SECTOR_SIZE - search_len; i++) {
-        if (memcmp(buffer + i, search_str, search_len) == 0) {
-            char old_line[17] = {0};
-            memcpy(old_line, buffer + i, search_len);
+        if (memcmp(buffer + i, search_bytes, search_len) == 0) {
+            char old_data[17] = {0};
+            memcpy(old_data, buffer + i, search_len);
 
+            // Обнуляем найденную строку
             memset(buffer + i, 0x00, search_len);
 
-            save_undo_state(sectors, OP_LINE_REMOVE, i, 0, 0, old_line, NULL, search_len);
+            // Сохраняем в undo
+            save_undo_state(sectors, OP_LINE_REMOVE, i, 0, 0, old_data, NULL, search_len);
 
             redo_top = -1;
 
@@ -549,6 +649,7 @@ void delete_string_at_cursor(sector_t *sectors, const char *search_str) {
 
     display_message("String not found.");
 }
+
 
 
 
@@ -579,6 +680,24 @@ void delete_bytes_from_cursor(sector_t *sectors, int count) {
 }
 
 
+int parse_hex_string(const char *hex_str, unsigned char *output) {
+    int count = 0;
+    while (*hex_str && *(hex_str + 1)) {
+        if (count >= 16) break;  // максимум 16 байт
+        
+        // Пропускаем пробелы
+        if (*hex_str == ' ') {
+            hex_str++;
+            continue;
+        }
+
+        // Считываем 2 символа как один байт
+        char byte_str[3] = { hex_str[0], hex_str[1], '\0' };
+        output[count++] = (unsigned char)strtoul(byte_str, NULL, 16);
+        hex_str += 2;
+    }
+    return count; // Возвращает сколько байтов распарсено
+}
 
 
 
