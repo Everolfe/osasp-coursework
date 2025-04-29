@@ -11,12 +11,12 @@
 
 ## 🚀 Установка и запуск
 
-```bash
-git clone https://github.com/Everolfe/osasp-coursework
-cd osasp-coursework
-make
-./editor <путь к устройству>
-```bash
+
+'git clone https://github.com/Everolfe/osasp-coursework'
+'cd osasp-coursework'
+'make'
+'./editor <путь к устройству>'
+
 ## 🎮 Управление
 
 Управление осуществляется с помощью клавиш на клавиатуре:
