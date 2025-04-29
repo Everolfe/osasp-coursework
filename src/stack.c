@@ -6,7 +6,17 @@ undo_item_t redo_stack[UNDO_STACK_SIZE];
 int undo_top = -1;
 int redo_top = -1;
 
-
+// Освобождение памяти одного элемента
+void free_undo_item(undo_item_t *item) {
+    if (item->old_line) {
+        free(item->old_line);
+        item->old_line = NULL;
+    }
+    if (item->new_line) {
+        free(item->new_line);
+        item->new_line = NULL;
+    }
+}
 
 void save_undo_state(sector_t *sectors, operation_t op_type, int index,
     unsigned char old_value, unsigned char new_value, const char *old_line, const char *new_line, int data_length) {
@@ -62,10 +72,35 @@ bool undo(sector_t *sectors) {
                 break;
         }
 
+        // Сохраняем в redo стек (глубокое копирование!)
         if (redo_top < UNDO_STACK_SIZE - 1) {
             redo_top++;
-            redo_stack[redo_top] = *item;
+            free_undo_item(&redo_stack[redo_top]);
+            undo_item_t *redo_item = &redo_stack[redo_top];
+
+            redo_item->op_type = item->op_type;
+            redo_item->index = item->index;
+            redo_item->old_value = item->old_value;
+            redo_item->new_value = item->new_value;
+            redo_item->data_length = item->data_length;
+
+            if (item->old_line && item->data_length > 0) {
+                redo_item->old_line = malloc(item->data_length);
+                memcpy(redo_item->old_line, item->old_line, item->data_length);
+            } else {
+                redo_item->old_line = NULL;
+            }
+
+            if (item->new_line && item->data_length > 0) {
+                redo_item->new_line = malloc(item->data_length);
+                memcpy(redo_item->new_line, item->new_line, item->data_length);
+            } else {
+                redo_item->new_line = NULL;
+            }
         }
+
+        // Очистка и переход
+        free_undo_item(item);
         undo_top--;
         return true;
     } else {
@@ -73,6 +108,7 @@ bool undo(sector_t *sectors) {
         return false;
     }
 }
+
 
 
 bool redo(sector_t *sectors) {
@@ -90,26 +126,40 @@ bool redo(sector_t *sectors) {
                 break;
         }
 
+        // Сохраняем обратно в undo стек (глубокое копирование!)
         if (undo_top < UNDO_STACK_SIZE - 1) {
             undo_top++;
-            undo_stack[undo_top] = *item;
+            free_undo_item(&undo_stack[undo_top]);
+            undo_item_t *undo_item = &undo_stack[undo_top];
+
+            undo_item->op_type = item->op_type;
+            undo_item->index = item->index;
+            undo_item->old_value = item->old_value;
+            undo_item->new_value = item->new_value;
+            undo_item->data_length = item->data_length;
+
+            if (item->old_line && item->data_length > 0) {
+                undo_item->old_line = malloc(item->data_length);
+                memcpy(undo_item->old_line, item->old_line, item->data_length);
+            } else {
+                undo_item->old_line = NULL;
+            }
+
+            if (item->new_line && item->data_length > 0) {
+                undo_item->new_line = malloc(item->data_length);
+                memcpy(undo_item->new_line, item->new_line, item->data_length);
+            } else {
+                undo_item->new_line = NULL;
+            }
         }
+
+        // Очистка и переход
+        free_undo_item(item);
         redo_top--;
         return true;
     } else {
         display_message("No more redo actions available.");
         return false;
-    }
-}
-// Освобождение памяти одного элемента
-void free_undo_item(undo_item_t *item) {
-    if (item->old_line) {
-        free(item->old_line);
-        item->old_line = NULL;
-    }
-    if (item->new_line) {
-        free(item->new_line);
-        item->new_line = NULL;
     }
 }
 

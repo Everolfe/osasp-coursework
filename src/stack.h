@@ -18,6 +18,8 @@ typedef struct {
     int data_length;         // Размер строки
 } undo_item_t;
 void clear_all_stacks();
+void clear_redo_stack();
+void clear_undo_stack();
 bool redo(sector_t *sectors);
 bool undo(sector_t *sectors);
 void save_undo_state(sector_t *sectors, operation_t op_type, int index,

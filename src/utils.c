@@ -37,6 +37,7 @@ void edit_byte(sector_t* sectors) {
             save_undo_state(sectors, OP_BYTE_CHANGE, index, old_value, new_value, NULL, NULL, 0);
 
             redo_top = -1;
+            clear_redo_stack();
         } else {
             display_error("Invalid ASCII input. Only printable characters allowed.");
         }
@@ -195,6 +196,7 @@ void replace_string_at_cursor(sector_t *sectors, const char *input_str, bool is_
     }
 
     redo_top = -1;
+    clear_redo_stack();
 
     free(data);
     free(old_line);
@@ -227,7 +229,7 @@ void delete_bytes_from_cursor(sector_t *sectors, int count) {
 
     // Сброс redo
     redo_top = -1;
-
+    clear_redo_stack();
     display_message("Bytes deleted.");
 }
 
