@@ -12,10 +12,10 @@
 ## 🚀 Установка и запуск
 
 
-'git clone https://github.com/Everolfe/osasp-coursework'
-'cd osasp-coursework'
-'make'
-'./editor <путь к устройству>'
+- git clone https://github.com/Everolfe/osasp-coursework
+- cd osasp-coursework
+- make
+- ./editor <путь к устройству>
 
 ## 🎮 Управление
 
