@@ -25,5 +25,6 @@ typedef struct {
     off_t sector;
     int cursor_x;
     int cursor_y;
+    uint8_t checksum;  // контрольная сумма последнего прочитанного сектора
 } sector_t;
 #endif

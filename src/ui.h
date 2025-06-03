@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include"block_io.h"
 #include "variables.h"
-
+extern char* fs_name;
 void init_ui();
 void display_sector(const unsigned char *buffer, size_t size, off_t sector_num, int cursor_x, int cursor_y);
 void display_error(const char *msg);
@@ -17,4 +17,5 @@ void graceful_exit(sector_t *sectors);
 void input_string(char *buffer, const char *prompt);
 void destroy_sector(sector_t *sector);
 sector_t* make_sector();
+const char *detect_filesystem(const unsigned char *boot_sector, const unsigned char *ext4_sector);
 #endif

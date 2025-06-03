@@ -25,7 +25,7 @@ void edit_byte(sector_t* sectors) {
         } else {
             display_error("Invalid HEX input. Please enter two hexadecimal characters.");
         }
-    } else {  // ASCII режим
+    } else if (display_mode == 1) {  // ASCII режим
         display_message("Enter ASCII value: ");
         echo();
         curs_set(1);
@@ -43,10 +43,25 @@ void edit_byte(sector_t* sectors) {
         }
         noecho();
         curs_set(0);
+    } else {  // Ввод числа
+        input_string(input, "Enter decimal value (0-255): ");
+        int value = atoi(input);
+        if (value >= 0 && value <= 255) {
+            unsigned char new_value = (unsigned char)value;
+            sectors->buffer[index] = new_value;
+
+            save_undo_state(sectors, OP_BYTE_CHANGE, index, old_value, new_value, NULL, NULL, 0);
+
+            redo_top = -1;
+            clear_redo_stack();
+        } else {
+            display_error("Invalid input. Please enter a decimal number between 0 and 255.");
+        }
     }
 
     free(input);  // освобождаем память
 }
+
 
 void replace_string_in_sector(unsigned char *buffer, const char *search_str, const char *replace_str, bool is_hex) {
     unsigned char *search_bytes = (unsigned char *)malloc(17);

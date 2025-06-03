@@ -3,20 +3,27 @@
 #include"variables.h"
 #include"stack.h"
 #include"utils.h"
-
+#include <signal.h>
+#define TOTAL_MODES 4
+#define CTRL_U 21
+char* fs_name;
 void handle_input(int ch, sector_t* sectors);
 void save_buffer_to_file(sector_t *sectors);
 void load_buffer_from_file(sector_t *sectors);
 void create_sectors_directory();
 void go_to_sector(off_t *sector);
+void signal_handler(int sig);
 bool display_help_flag = false;
 bool exit_flag = false;
 bool file_loaded = false;
+bool sector_modified = false;
+bool new_sector = false;
 int matches[MAX_MATCHES];  
 int match_count = 0;
 int display_mode = 0;
 int main(int argc, char *argv[]) {
-    
+    signal(SIGINT, signal_handler);   // Ctrl+C
+    signal(SIGTSTP, signal_handler); 
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <device/file>\n", argv[0]);
         return 1;
@@ -40,33 +47,53 @@ int main(int argc, char *argv[]) {
     init_ui();
 
     int ch;
-
+    unsigned char boot[SECTOR_SIZE];
+    unsigned char ext[SECTOR_SIZE];
+    
+    // Считать сектор 0 (boot sector)
+    if (lseek(sectors.fd, 0 * SECTOR_SIZE, SEEK_SET) == -1) {
+        perror("lseek boot failed");
+        exit(1);
+    }
+    if (read(sectors.fd, boot, SECTOR_SIZE) != SECTOR_SIZE) {
+        perror("read boot failed");
+        exit(1);
+    }
+    
+    // Считать сектор 2 (для ext superblock начало в 1024 байта = сектор 2)
+    if (lseek(sectors.fd, 2 * SECTOR_SIZE, SEEK_SET) == -1) {
+        perror("lseek ext failed");
+        exit(1);
+    }
+    if (read(sectors.fd, ext, SECTOR_SIZE) != SECTOR_SIZE) {
+        perror("read ext failed");
+        exit(1);
+    }
+    
+    fs_name = detect_filesystem(boot, ext);
     while (1) {
-        if (!file_loaded) {
+        if (new_sector) {
             if (read_sector(&sectors) != SECTOR_SIZE) {
                 display_error("Failed to read sector");
                 break;
             }
-        } else {
-            file_loaded = false; // Сброс после одной итерации
+            new_sector = false;  // Сбросим флаг до следующего перехода
         }
         display_sector(sectors.buffer, SECTOR_SIZE, sectors.sector, sectors.cursor_x, sectors.cursor_y);
-
         ch = getch();
         handle_input(ch, &sectors);
         if (exit_flag){
-            break;
+        break;
         }
     }
 
-    endwin();
     close_device(&sectors.fd);
 
     if (sectors.buffer) {
         free(sectors.buffer);
     }
-    
     clear_all_stacks();
+    graceful_exit(&sectors);
     return 0;
 }
 
@@ -80,8 +107,15 @@ void handle_input(int ch, sector_t* sectors) {
     bool undo_flag = false;
     switch (ch) {
         case 'a':          case 'A':// Переход к предыдущему сектору
+            if (sector_modified) {
+                if (write_sector(sectors) != SECTOR_SIZE) {
+                    display_error("Failed to save modified sector");
+                } else {
+                    sector_modified = false;
+                }
+            }
             if (sectors->sector > 0) {
-
+                new_sector = true;
                 sectors->sector--;
                 sectors->cursor_x = 0;
                 sectors->cursor_y = 0;
@@ -91,6 +125,14 @@ void handle_input(int ch, sector_t* sectors) {
             clear();
             break;
         case 'd':         case 'D': // Переход к следующему сектору
+            if (sector_modified) {
+                if (write_sector(sectors) != SECTOR_SIZE) {
+                    display_error("Failed to save modified sector");
+                } else {
+                    sector_modified = false;
+                }
+            }
+            new_sector = true;
             sectors->sector++;
             sectors->cursor_x = 0;
             sectors->cursor_y = 0;
@@ -101,32 +143,27 @@ void handle_input(int ch, sector_t* sectors) {
             break;
         case 'E':         case 'e': // Режим редактирования
             edit_byte(sectors); // Редактируем байт
-            if (write_sector(sectors) != SECTOR_SIZE) {
-                display_error("Failed to write sector");
-            } else {
-                clear();
-                refresh();
-            }
+            sector_modified = true;
+            clear();
+            refresh();
             break;
         case 'g':  // Переход к определенному сектору
+            if (sector_modified) {
+                if (write_sector(sectors) != SECTOR_SIZE) {
+                    display_error("Failed to save modified sector");
+                } else {
+                    sector_modified = false;
+                }
+            }
+            new_sector = true;
             go_to_sector(&(sectors->sector));  // Вызов новой функции для перехода
             break;
-            
         case 'H':
         case 'h':  // Отображение подсказки
-            if (display_help_flag) {
-                // Если подсказка уже показана, скрываем ее
-                display_help_flag = false;
-                clear();  // Очищаем экран, чтобы скрыть подсказку
-                refresh();  // Обновляем экран
-            } else {
-                // Если подсказка не показана, показываем ее
-                display_help_flag = true;
-                display_help();  // Показать подсказку
-            }
+            display_help();
             break;  
         
-            case 'I': case 'i':
+        case 'I': case 'i':
             {
                 char input_str[MAX_INPUT_LEN] = {0};
             
@@ -140,13 +177,9 @@ void handle_input(int ch, sector_t* sectors) {
                 }
             
                 replace_string_at_cursor(sectors, input_str, is_hex);
-            
-                if (write_sector(sectors) != SECTOR_SIZE) {
-                    display_error("Failed to write sector after insert");
-                } else {
-                    clear();
-                    refresh();
-                }
+                sector_modified = true;
+                clear();
+                refresh();
                 break;
             }
             
@@ -156,6 +189,7 @@ void handle_input(int ch, sector_t* sectors) {
                 display_error("Failed to write sector after load");
             }
             file_loaded = true;
+            sector_modified = true;
             break;
         case 'N':
         case 'n':  // Следующее совпадение
@@ -235,10 +269,9 @@ void handle_input(int ch, sector_t* sectors) {
                 noecho(); curs_set(0);
             
                 replace_string_in_sector(sectors->buffer, search_string, replace_string, is_hex);
-            
-                if (write_sector(sectors) != SECTOR_SIZE) {
-                    display_error("Failed to write sector after replace");
-                }
+                sector_modified = true;
+                clear();
+                refresh();
                 break;
             }
             
@@ -256,10 +289,7 @@ void handle_input(int ch, sector_t* sectors) {
                 }
             
                 delete_string_at_cursor(sectors, search_string, is_hex);
-            
-                if (write_sector(sectors) != SECTOR_SIZE) {
-                    display_error("Failed to write sector after deletion");
-                }
+                sector_modified = true;
                 clear();
                 refresh();
                 break;
@@ -275,11 +305,8 @@ void handle_input(int ch, sector_t* sectors) {
 
                 // Удаляем байты (заменяем их на нули)
                 delete_bytes_from_cursor(sectors, delete_count);
-
+                sector_modified = true;
                 // Записываем изменения в файл
-                if (write_sector(sectors) != SECTOR_SIZE) {
-                    display_error("Failed to write sector after deletion");
-                }
                 clear();
                 refresh();
                 break;
@@ -291,6 +318,14 @@ void handle_input(int ch, sector_t* sectors) {
                 sectors->cursor_y++;
                 sectors->cursor_x = 0;
             } else {
+                if (sector_modified) {
+                    if (write_sector(sectors) != SECTOR_SIZE) {
+                        display_error("Failed to save modified sector");
+                    } else {
+                        sector_modified = false;
+                    }
+                }
+                new_sector = true;
                 sectors->sector++;
                 sectors->cursor_x = 0;
                 sectors->cursor_y = 0;
@@ -305,6 +340,14 @@ void handle_input(int ch, sector_t* sectors) {
                 sectors->cursor_x = 15;
             } else {
                 if (sectors->sector > 0) {
+                    if (sector_modified) {
+                        if (write_sector(sectors) != SECTOR_SIZE) {
+                            display_error("Failed to save modified sector");
+                        } else {
+                            sector_modified = false;
+                        }
+                    }
+                    new_sector = true;
                     sectors->sector--;
                     sectors->cursor_x = 15;
                     sectors->cursor_y = 31;
@@ -324,27 +367,29 @@ void handle_input(int ch, sector_t* sectors) {
             }
             break;
         case '\t':  // TAB для переключения режима отображения
-            display_mode = (display_mode + 1) % 2;  // Между 0 (HEX) и 1 (ASCII)
+            display_mode = (display_mode + 1) % TOTAL_MODES;  // Между 0 (HEX) и 1 (ASCII)
+            clear();
             break;
         case 'u': case 'U':
             undo_flag = undo(sectors);
             if(undo_flag){
-                if (write_sector(sectors) != SECTOR_SIZE) {
-                    display_error("Failed to write sector after deletion");
-                }
                 clear();
                 refresh();
             }
             break;
         
-        case 21:  // CTRL+U — Redo
+        case CTRL_U:  // CTRL+U — Redo
             redo_flag = redo(sectors);
             if(redo_flag){
-                if (write_sector(sectors) != SECTOR_SIZE) {
-                    display_error("Failed to write sector after deletion");
-                }
                 clear();
                 refresh();
+            }
+            break;
+        case KEY_F(5):  // F5
+            if (write_sector(sectors) != SECTOR_SIZE) {
+                display_error("Failed to write sector");
+            } else {
+                display_message("Sector written to device");
             }
             break;
         default:
@@ -478,3 +523,8 @@ void create_sectors_directory() {
     }
 }
 
+void signal_handler(int sig) {
+    exit_flag = true;
+    endwin();
+    printf("\nCaught signal %d. Exiting...\n", sig);
+}
